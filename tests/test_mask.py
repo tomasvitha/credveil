@@ -1,4 +1,4 @@
-"""Tests for secretmask.py on synthetic samples.  Run: python -m unittest -v (in this folder).
+"""Masking on synthetic samples.  Run from the repo root: python -m unittest discover tests
 
 Every secret below is planted and fake. Each fixture lists what must disappear (SECRETS) and
 what must survive (KEEP) - over-masking that eats the diagnostic content is a failure too.
@@ -9,8 +9,8 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import secretmask as sm  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from credveil import mask as sm  # noqa: E402
 
 FORTIOS_SHOW = '''\
 config system admin
@@ -193,7 +193,7 @@ class Fixtures(unittest.TestCase):
         out, m = self.check('fortios', FORTIOS_SHOW, FORTIOS_SHOW_SECRETS, FORTIOS_SHOW_KEEP)
         self.assertIn('<pem:certificate sha=', out)
         self.assertIn('<masked:encrypted-private-key>', out)
-        self.assertEqual(m._ctx, [], 'config path stack not balanced')
+        self.assertEqual(m._lines.path, [], 'config path stack not balanced')
 
     def test_fortios_tunnel_list(self):
         self.check('fortios', FORTIOS_TUNNEL_LIST, TUNNEL_SECRETS, TUNNEL_KEEP)
@@ -308,7 +308,7 @@ class Json(unittest.TestCase):
 
 
 class Identity(unittest.TestCase):
-    """FP-1 (2026-11-27): user and group names pass; only secret forms are masked."""
+    """User and group names pass; only secret forms are masked."""
     H32 = '9f' * 16                                   # a SAML-style 32-hex user id, built at runtime
     CRYPT = '$6$' + 'saltsalt' + '$' + 'Q' * 43         # crypt shape, built at runtime
 
