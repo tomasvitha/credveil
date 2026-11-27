@@ -80,6 +80,17 @@ LEAKS = [
          'PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\nPrivate-Lines: 1\n'
          'AAAAIPlantedPuttyPrivLine48charsAbCdEf0123456789xy\nPrivate-MAC: 0f' + '1a' * 31 + '\n',
          ('PlantedPuttyPriv',), ('Encryption: none',)),
+    Case('session JWT in a log dump', 'generic',
+         '2026-11-27T10:00:00Z INFO login ok, token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.'
+         'eyJzdWIiOiJhZG1pbiIsInZkIjoicm9vdCJ9.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U seen\n',
+         ('eyJhbGciOiJIUzI1NiI', 'dozjgNryP4J3jVmN'), ('INFO login ok, token',)),
+    Case('hash export with an argon2 and an LDAP digest', 'generic',
+         'ro:$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHRzb21lc2FsdA$RdescudvJCsgt3ub+b+dWRWJTmaaJObG\n'
+         'cn=admin: {SSHA}5en6G6MezRroT3XKqkdPOmY/BfQ=\n',
+         ('RdescudvJCsgt3ub', '5en6G6MezRroT3XK'), ('argon2id', '{SSHA}', 'cn=admin')),
+    Case('URL-safe session token', 'generic',
+         'SESSION=8fJ2kLmQ_9xYzAbC-dEfGhIjKlMnOpQrStUvWxYz0123456789\n',
+         ('8fJ2kLmQ_9xYzAbC',), ('SESSION=',)),
 ]
 
 # Text that must come out unchanged (diagnostics the masking used to eat).
