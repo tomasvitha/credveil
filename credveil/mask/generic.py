@@ -42,7 +42,8 @@ JSON_BASE_KEYS = frozenset({
     'refresh_token', 'client_secret', 'client-secret', 'shared-secret', 'community',
     'ciphertext', 'session_key', 'auth-password', 'priv-password', 'key-string'})
 JSON_SECRET_SUFFIXES = ('-password', '_password', '-passwd', '-pwd', '-secret', '_secret',
-                        '-token', '_token', '-psk', '_psk', '-private-key', '_private_key')
+                        '-token', '_token', '-psk', '_psk', '-private-key', '_private_key',
+                        '-access-key', '_access_key')
 JSON_PAIR_RE = re.compile(r'("([A-Za-z0-9_.-]+)"\s*:\s*)"((?:[^"\\]|\\.)*)"')
 
 
@@ -111,6 +112,75 @@ def _backstop(rx, keep, s, counts, cat):
     return new
 
 
+# ---------------------------------------------------------------------------------------------
+# Credential families: the shape itself is the evidence, so no vendor context is needed
+# ---------------------------------------------------------------------------------------------
+# A JWT used to lose only its payload: `-`/`_` split it out of the base64 backstop, so the
+# header and the signature still reached the model. One token, one marker.
+# One alternation, one pass: a device export is masked line by line, so each extra rule is
+# another full scan of every line.
+_FAMILY_PATTERNS = (
+    ('jwt', 'jwt',
+     (r'(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}'
+      r'(?![A-Za-z0-9_-])')),
+    # Platform tokens: the issuer is in the prefix, which device output never produces otherwise.
+    ('github-token', 'github', r'\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b'),
+    ('gitlab-token', 'gitlab', r'\bglpat-[A-Za-z0-9_-]{20,}'),
+    ('slack-token', 'slack', r'\bxox[abposr]-[A-Za-z0-9-]{10,}'),
+    ('stripe-key', 'stripe', r'\b[rs]k_live_[A-Za-z0-9]{20,}'),
+    ('google-key', 'google', r'\bAIza[0-9A-Za-z_-]{35}\b'),
+    ('aws-key-id', 'aws', r'\b(?:AKIA|ASIA)[0-9A-Z]{16}\b'),
+    ('api-key', 'apikey', r'\bsk-[A-Za-z0-9_-]{32,}'),
+    # Password hashes: keep the scheme (it says what the system stores, not the password) and
+    # mask the digest. The `$` may be missing: Django and passlib store `pbkdf2_sha256$…` so.
+    ('hash', 'hash',
+     (r'(?<![A-Za-z0-9])\$?(?P<scheme>argon2(?:id|i|d)?|pbkdf2(?:[_-]sha(?:1|256|512))?|scrypt|'
+      r'bcrypt[_-]sha256)\$[^\s"\']{10,}')),
+    ('hash', 'ldap',
+     r'(?P<ldapscheme>\{(?:SSHA(?:256|512)?|SHA|SMD5|MD5|CRYPT)\})[A-Za-z0-9+/=.]{6,}'),
+    # Credentials in a URL's userinfo: `curl -v` prints them, and `-u` takes them.
+    ('url-userinfo', 'url', r'(?i:\b)(?P<urlpre>[a-z][a-z0-9+.-]*://[^\s/:@]+):[^\s/@]+@'),
+)
+FAMILY_RE = re.compile('|'.join(f'(?P<{name}>{pat})' for _, name, pat in _FAMILY_PATTERNS))
+# The alternation costs ~10 us a line and almost no device line carries one of these markers, so
+# a substring gate keeps the extra rules off the hot path (measured: 10 us -> 3 us per plain line).
+_FAMILY_HINTS = ('eyj', 'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_', 'glpat-', 'xox',
+                 'k_live_', 'aiza', 'akia', 'asia', 'sk-', '://', '$', 'pbkdf2', 'scrypt',
+                 'argon2', 'bcrypt_sha256', '{ssha', '{smd5', '{sha', '{md5', '{crypt')
+
+
+def mask_families(line, counts):
+    """Rules whose evidence is inside the token; they run before the broad backstops."""
+    low = line.lower()
+    if not any(h in low for h in _FAMILY_HINTS):
+        return line
+
+    def repl(m):
+        whole = m.group(0)
+        if MASK in whole:                   # already masked: keep counts honest, do not double-wrap
+            return whole
+        for cat, name, _ in _FAMILY_PATTERNS:
+            if m.group(name) is not None:
+                counts[cat] += 1
+                if name == 'jwt':
+                    return '<masked:jwt>'
+                if name == 'hash':
+                    return m.group('scheme') + '$<masked:hash>'
+                if name == 'ldap':
+                    return m.group('ldapscheme') + '<masked:hash>'
+                if name == 'url':
+                    return m.group('urlpre') + ':<masked:url-password>@'
+                return f'<masked:{cat}>'
+        return whole
+    return FAMILY_RE.sub(repl, line)
+
+
+def b64url_suspicious(tok):
+    """Base64url runs: `-`/`_` are exactly what the standard base64 backstop cannot see."""
+    core = tok.rstrip('=')
+    return ('-' in core or '_' in core) and b64_suspicious(core)
+
+
 def mask_line(line, counts, json_keys=frozenset(), backstops=True):
     """Vendor-neutral rules for one line. Specific forms first, the broad backstops last."""
     line = _sub(PEM_INLINE_RE, lambda m: pem_marker(m.group(1), m.group(0)), line, counts, 'pem')
@@ -119,11 +189,13 @@ def mask_line(line, counts, json_keys=frozenset(), backstops=True):
     line = _sub(HEX0X_RE, MASK, line, counts, 'hex')
     line = _sub(KEYHEX_RE, lambda m: m.group(1) + MASK, line, counts, 'session-key')
     line = _sub(AUTH_HEADER_RE, lambda m: m.group(1) + MASK, line, counts, 'header')
+    line = mask_families(line, counts)
     line = _sub_where(JSON_PAIR_RE, lambda m: json_key_is_secret(m.group(2), json_keys)
                       and m.group(3) and MASK not in m.group(3),
                       lambda m: m.group(1) + f'"{MASK}"', line, counts, 'json')
     if backstops:
         line = _backstop(LONGHEX_RE, lambda t: False, line, counts, 'hex')
+        line = _backstop(B64URL_RE, lambda t: not b64url_suspicious(t), line, counts, 'b64')
         if B64_RE.search(line):
             line = _backstop(B64_RE, lambda t: not b64_suspicious(t), line, counts, 'b64')
     return line
@@ -159,6 +231,9 @@ NET_RULES = (
     (KEYHEX_RE, lambda m: m.group(1) + MASK, 'session-key'),
 )
 NET_B64_RE = re.compile(r'(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{60,}={0,2}(?![A-Za-z0-9+/=])')
+# Base64url runs: `-`/`_` are outside the standard alphabet, so the rule above cannot see them
+# and a JWT or a URL-safe token used to pass whole (or lose only one segment to a fragment match).
+B64URL_RE = re.compile(r'(?<![A-Za-z0-9+_-])[A-Za-z0-9_-]{40,}={0,2}(?![A-Za-z0-9+/=_-])')
 
 
 def net_mask(text, known=(), counts=None):
@@ -171,6 +246,8 @@ def net_mask(text, known=(), counts=None):
     new = _mask_ppk(new, counts)
     for rx, repl, cat in NET_RULES:
         new = _sub(rx, repl, new, counts, cat)
+    new = mask_families(new, counts)
+    new = _backstop(B64URL_RE, lambda t: not b64url_suspicious(t), new, counts, 'b64')
     new = _sub_where(NET_B64_RE, lambda m: b64_suspicious(m.group(0)), lambda m: '<masked:b64>',
                      new, counts, 'b64')
     return mask_known(new, known, counts, MIN_KNOWN_NET)

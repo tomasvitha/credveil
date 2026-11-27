@@ -30,8 +30,9 @@ register(Pack(
 ```
 
 Every pack gets the vendor-neutral rules on top: PEM and PuTTY keys, `ENC`, crypt hashes,
-auth headers, JSON `"key": "value"` pairs with secret-looking keys, long hex and base64 blobs,
-and the known credentials.
+auth headers, JSON `"key": "value"` pairs with secret-looking keys, credential families (JWTs,
+platform tokens, password hashes, URL userinfo), long hex and base64/base64url blobs, and the
+known credentials.
 
 ## Building blocks (`credveil/mask/syntax.py`)
 
