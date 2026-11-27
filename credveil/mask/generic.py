@@ -42,7 +42,7 @@ JSON_BASE_KEYS = frozenset({
     'refresh_token', 'client_secret', 'client-secret', 'shared-secret', 'community',
     'ciphertext', 'session_key', 'auth-password', 'priv-password', 'key-string'})
 JSON_SECRET_SUFFIXES = ('-password', '_password', '-passwd', '-pwd', '-secret', '_secret',
-                        '-token', '_token', '-psk', '-private-key', '_private_key')
+                        '-token', '_token', '-psk', '_psk', '-private-key', '_private_key')
 JSON_PAIR_RE = re.compile(r'("([A-Za-z0-9_.-]+)"\s*:\s*)"((?:[^"\\]|\\.)*)"')
 
 
@@ -147,7 +147,7 @@ NET_PRIV_BLOCK_RE = re.compile(
     r'-----BEGIN ([A-Z ]*PRIVATE KEY)-----'
     r'(?:(?:\r?\n|\\n)(?:[A-Za-z0-9+/=]+|Proc-Type:[^\r\n\\]*|DEK-Info:[^\r\n\\]*)?)*'
     r'(?:(?:\r?\n|\\n)?-----END \1-----)?')
-NET_PPK_RE = re.compile(r'(Private-Lines:\s*\d+)((?:(?:\r?\n|\\n)[A-Za-z0-9+/=]+)+)')
+NET_PPK_RE = re.compile(r'Private-Lines:\s*(\d+)')
 NET_RULES = (
     (re.compile(r'\bENC\s+(?!<masked)[A-Za-z0-9+/=]{24,}'), lambda m: 'ENC ' + MASK, 'enc'),
     (re.compile(r'\$(?:1|5|6|8|9|y|2[aby])\$[./A-Za-z0-9]{2,}\$[./A-Za-z0-9]{20,}'), lambda m: MASK, 'hash'),
@@ -165,12 +165,25 @@ def net_mask(text, known=(), counts=None):
         return text
     new = _sub(NET_PRIV_BLOCK_RE, lambda m: f'<masked:{m.group(1).lower().replace(" ", "-")}>',
                text, counts, 'pem')
-    new = _sub(NET_PPK_RE, lambda m: m.group(1) + '\n<masked:ppk-private-lines>', new, counts, 'pem')
+    new = _mask_ppk(new, counts)
     for rx, repl, cat in NET_RULES:
         new = _sub(rx, repl, new, counts, cat)
     new = _sub_where(NET_B64_RE, lambda m: b64_suspicious(m.group(0)), lambda m: '<masked:b64>',
                      new, counts, 'b64')
     return mask_known(new, known, counts)
+
+
+def _mask_ppk(text, counts):
+    """`Private-Lines: N` and the N key lines after it (real newlines or JSON-escaped ones)."""
+    m = NET_PPK_RE.search(text)
+    while m:
+        nl = '\\n' if text[m.end():m.end() + 2] == '\\n' else '\n'
+        parts = text[m.end():].split(nl, int(m.group(1)) + 1)
+        rest = parts[-1] if len(parts) > int(m.group(1)) + 1 else ''
+        text = text[:m.end()] + nl + '<masked:ppk-private-lines>' + (nl + rest if rest or len(parts) > 1 else '')
+        counts['pem'] += 1
+        m = NET_PPK_RE.search(text, m.end() + len(nl) + 26)
+    return text
 
 
 def mask_known(text, known, counts):

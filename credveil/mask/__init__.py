@@ -8,7 +8,7 @@ that hides diagnostic content.
 from .engine import Masker, mask_json
 from .generic import MASK, net_mask
 
-__all__ = ['MASK', 'Masker', 'mask_json', 'net_mask', 'mask_any']
+__all__ = ['MASK', 'Masker', 'mask_json', 'net_mask', 'mask_any', 'mask_statement']
 
 
 def mask_any(text, known=()):
@@ -18,3 +18,15 @@ def mask_any(text, known=()):
     if pack is None:
         return net_mask(text, known)
     return Masker(pack.name, known=known).text(text)
+
+
+def mask_statement(vendor, stmt, context=''):
+    """One config statement on its own, for tools that flatten configs.
+
+    context is the line that sets the statement's scope (a RouterOS `/menu`, a FortiOS
+    `config …`); it is fed first and not returned.
+    """
+    m = Masker(vendor)
+    if context:
+        m.feed(context)
+    return m.text(stmt)

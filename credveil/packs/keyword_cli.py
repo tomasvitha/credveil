@@ -46,6 +46,7 @@ RULES = (
     RegexRule(re.compile(r'\b(?:sha1|sha256|plaintext)\s+"([^"]+)"'), category='word'),  # AOS-S
     RegexRule(re.compile(r'"([^"]+)"(?=[^"]*## SECRET-DATA)'), category='word'),       # Junos
 )
+JUNOS_SECRET_DATA = '## SECRET-DATA'
 TABLE_COLUMNS = ('preshared key', 'pre-shared key', 'psk', 'password', 'secret', 'shared secret',
                  'key string', 'community', 'community name')
 
@@ -58,6 +59,8 @@ class Lines:
         line = self.table.mask(line, counts)
         for r in RULES:
             line = r.mask(line, counts)
+        if JUNOS_SECRET_DATA in line:     # the marker only says a value was there; it is masked now
+            line = line.replace(' ' + JUNOS_SECRET_DATA, '').replace(JUNOS_SECRET_DATA, '').rstrip()
         return WORDS.mask(line, counts)
 
 

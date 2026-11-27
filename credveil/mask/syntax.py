@@ -86,7 +86,8 @@ class AssignRules:
     separators: str = '='         # '=' or '=:'
 
     def __post_init__(self):
-        sep = '|'.join(re.escape(c) for c in self.separators)
+        # `:` separates only before a space or quote: `$env:NAME` and `host:port` are not pairs
+        sep = '|'.join('=' if c == '=' else r':(?=[\s"\'])' for c in self.separators)
         object.__setattr__(self, '_rx', re.compile(
             r'(?<![\w.-])(?P<k>[A-Za-z_][\w.-]*)(?P<s>\s*(?:' + sep + r')\s*)'
             r'(?P<v>"(?:[^"\\]|\\.)*"|\'[^\']*\'|[^\s,;]+)'))
@@ -145,23 +146,26 @@ class TableMasker:
     def __init__(self, secret_columns):
         self.secret_columns = tuple(c.lower() for c in secret_columns)
         self._col = None          # (start, end) of the secret column in the current table
+        self._rows = 0
 
     def mask(self, line, counts):
         if not line.strip():
-            self._col = None
+            if self._rows:        # a blank line ends the table; one right under the header does not
+                self._col, self._rows = None, 0
             return line
         cols = [(m.start(), m.end(), m.group(0).lower()) for m in self._COL_RE.finditer(line)]
         if len(cols) >= 2:
             for k, (s, _, title) in enumerate(cols):
                 if title in self.secret_columns:
                     end = cols[k + 1][0] if k + 1 < len(cols) else None
-                    self._col = (s, end)
+                    self._col, self._rows = (s, end), 0
                     return line
         if self._col is None:
             return line
         s, end = self._col
         for cs, ce, _ in cols:
             if ce > s and (end is None or cs < end):
+                self._rows += 1
                 counts['table'] += 1
                 return line[:cs] + MASK + line[ce:]
         return line
