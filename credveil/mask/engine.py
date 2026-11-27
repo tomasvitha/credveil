@@ -97,7 +97,7 @@ class Masker:
     def leaks(self, text):
         """1-based line numbers where a known secret (or an encoding of it) still appears."""
         return [i for i, line in enumerate(text.split('\n'), 1)
-                if any(v in line for k in self.known for v in g.variants(k))]
+                if any(v in line for k in self.known for v in g.variants(k, g.MIN_KNOWN))]
 
     def summary(self):
         return ', '.join(f'{k}={v}' for k, v in sorted(self.counts.items())) or 'nothing'

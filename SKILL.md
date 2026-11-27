@@ -32,6 +32,8 @@ between you and the device:
 
 ```bash
 N="${CLAUDE_SKILL_DIR}/scripts/credveil.py"    # Windows: python "$N" …   Linux/macOS: python3 "$N" …
+# No substitution (the path above starts with /scripts, e.g. in Codex): use the directory this
+# SKILL.md was loaded from instead, e.g. ~/.agents/skills/credveil/scripts/credveil.py
 python3 "$N" list                              # aliases, vendors, which pins/creds are set
 python3 "$N" run <alias> -c 'get system status' -c 'get router info ospf neighbor'
 python3 "$N" run <alias> --vdom Branch <<'EOF'

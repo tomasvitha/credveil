@@ -1,7 +1,7 @@
 # Installing credveil
 
-Written for the agent (or person) wiring credveil into a machine. Steps 1–4 can be done by an
-agent; step 5 and every credential value are the operator's. Each step ends with a check.
+Written for the agent (or person) wiring credveil into a machine. An agent can do steps 1–3;
+step 4 (pins) and step 5 (credentials) are the operator's. Each step ends with a check.
 
 Requirements: Python 3.11+ (standard library only), `git`, `curl`, OpenSSH (Linux/macOS) or
 PuTTY `plink` ≥ 0.75 (Windows; Git Bash provides `bash` for the hooks). Linux and macOS:
@@ -22,17 +22,16 @@ path, so adjust it there.
 
 ## 2. Create the configuration
 
-```bash
-mkdir -p ~/.config/credveil/creds
-cp ~/.claude/skills/credveil/inventory.example.toml ~/.config/credveil/inventory.toml
-```
+Ask the operator for the device list first, then write the complete inventory in one go:
+`mkdir -p ~/.config/credveil/creds`, then create `~/.config/credveil/inventory.toml` from
+`inventory.example.toml` with one `[device.<alias>]` per device: `host`, `vendor` (see
+`credveil vendors`), `user`, and the paths of its credential files. Leave `hostkey` and
+`tls_pin` out. They come in step 4. `$CREDVEIL_HOME` moves the whole directory. The inventory
+holds no secrets, only paths.
 
-Fill in one `[device.<alias>]` per device: `host`, `vendor` (see `credveil vendors`), `user`,
-and the paths of its credential files. `$CREDVEIL_HOME` moves the whole directory. The
-inventory holds no secrets, only paths.
-
-Do this before step 3. Once an inventory exists, the always-on guard stops agents from writing
-into this directory, and from then on the operator edits it.
+**Write it complete.** The moment an inventory exists, the always-on guard (step 3, already
+wired on machines that share a bootstrap) stops agents from writing into this directory. Every
+later change, pins included, is the operator's.
 
 **Check:** `credveil list` shows the aliases.
 
@@ -48,7 +47,7 @@ Add to `~/.claude/settings.json`, merging into any existing `hooks.PreToolUse` l
         "matcher": "Bash|PowerShell|Read|Grep|Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {"type": "command",
-           "command": "bash \"$HOME/.claude/skills/credveil/hooks/run-py.sh\" pre home"}
+           "command": "[ ! -f \"$HOME/.claude/skills/credveil/hooks/claude_code.py\" ] || bash \"$HOME/.claude/skills/credveil/hooks/run-py.sh\" pre home"}
         ]
       }
     ]
@@ -56,16 +55,17 @@ Add to `~/.claude/settings.json`, merging into any existing `hooks.PreToolUse` l
 }
 ```
 
-It does exactly three things: credential files stay unread, `$CREDVEIL_HOME` stays unwritten,
+The `[ ! -f … ] ||` prefix makes it fail open when the clone is missing or too old. It does
+exactly three things: credential files stay unread, `$CREDVEIL_HOME` stays unwritten,
 and `CREDVEIL_HOME` cannot be overridden in a command. It does not touch device access, so
 it adds no friction to unrelated work. The device-access guard and the output net live in
 `SKILL.md`'s frontmatter and start when the skill is invoked.
 
-**Check:** in a new session, ask the agent to `cat ~/.config/credveil/inventory.toml`. The
-command is blocked with "Blocked by the credveil guard". Reading the file with the Read tool is
-allowed, because the inventory holds no secrets.
+**Check:** in a new session, ask the agent to `cat ~/.config/credveil/creds/<any file>` and to
+edit the inventory. Both are refused with "Blocked by the credveil guard". Reading the
+inventory is allowed, because it holds no secrets.
 
-## 4. Pin the device keys
+## 4. Pin the device keys (operator)
 
 - **SSH:** `credveil hostkey <alias>` prints the fingerprint. The operator verifies it out of
   band. Then either set `hostkey = "SHA256:…"` in the inventory (plink), or append

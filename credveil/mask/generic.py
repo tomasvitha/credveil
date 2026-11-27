@@ -129,15 +129,18 @@ def mask_line(line, counts, json_keys=frozenset(), backstops=True):
     return line
 
 
-def variants(secret):
+def variants(secret, min_len):
     """The secret and the encodings it is likely to appear in."""
     vs = {secret, urllib.parse.quote(secret, safe=''), urllib.parse.quote_plus(secret)}
     b = base64.b64encode(secret.encode()).decode()
     vs.update((b, b.rstrip('=')))
-    return [v for v in vs if len(v) >= MIN_KNOWN]
+    return [v for v in vs if len(v) >= min_len]
 
 
-MIN_KNOWN = 6  # shorter known values ("22", "admin") would mask ordinary output
+# Shortest known credential that is checked. The CLI checks one device's own credentials, so 4
+# is affordable; the output net checks every device's in any text, where short values ("admin")
+# would mask ordinary output.
+MIN_KNOWN, MIN_KNOWN_NET = 4, 6
 
 
 # ---------------------------------------------------------------------------------------------
@@ -170,7 +173,7 @@ def net_mask(text, known=(), counts=None):
         new = _sub(rx, repl, new, counts, cat)
     new = _sub_where(NET_B64_RE, lambda m: b64_suspicious(m.group(0)), lambda m: '<masked:b64>',
                      new, counts, 'b64')
-    return mask_known(new, known, counts)
+    return mask_known(new, known, counts, MIN_KNOWN_NET)
 
 
 def _mask_ppk(text, counts):
@@ -186,9 +189,11 @@ def _mask_ppk(text, counts):
     return text
 
 
-def mask_known(text, known, counts):
+def mask_known(text, known, counts, min_len=MIN_KNOWN):
     for k in known:
-        for v in variants(k.strip()):
+        if len(k.strip()) < min_len:
+            continue
+        for v in variants(k.strip(), min_len):
             if v in text:
                 text = text.replace(v, '<masked:known>')
                 counts['known'] += 1

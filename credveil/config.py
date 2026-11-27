@@ -60,10 +60,10 @@ class Inventory:
     def hosts(self):
         return [h for h in self.guard_hosts + [d.get('host', '') for d in self.devices.values()] if h]
 
-    def known_secrets(self):
-        """Passwords and tokens of every device: the values that must never appear in output."""
+    def known_secrets(self, alias=None):
+        """Passwords and tokens that must never appear in output: one device's, or every device's."""
         out = []
-        for d in self.devices.values():
+        for d in ([self.devices[alias]] if alias else self.devices.values()):
             for k in ('password_file', 'token_file'):
                 v = read_secret(_resolve(self.home, d.get(k)), missing_ok=True)
                 if v:

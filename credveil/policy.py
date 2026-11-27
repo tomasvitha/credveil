@@ -22,7 +22,12 @@ WRAPPERS = frozenset({'sudo', 'env', 'exec', 'time', 'nohup', 'command', 'xargs'
 INTERPRETERS = frozenset({'python', 'python3', 'py', 'node', 'perl', 'ruby', 'pwsh', 'powershell'})
 LIBRARY_RE = re.compile(r'(?<![\w.-])(?:paramiko|netmiko|requests|urllib|http\.client|socket|'
                         r'Net\.WebClient|Net\.Sockets)(?![\w-])', re.I)
-HOME_OVERRIDE_RE = re.compile(r'(?i)(?:^|[\s;&|(`$:])CREDVEIL_HOME\s*=|setx\s+CREDVEIL_HOME')
+WRITE_CMDS = frozenset({
+    'cp', 'mv', 'rm', 'ln', 'tee', 'touch', 'truncate', 'install', 'chmod', 'chown', 'dd', 'rsync',
+    'set-content', 'add-content', 'out-file', 'new-item', 'remove-item', 'copy-item', 'move-item',
+    'rename-item', 'sc', 'ac', 'ni', 'del', 'copy', 'move', 'ren'})
+SED_INPLACE_RE = re.compile(r'(?<![\w-])(?:sed|perl)\s+(?:-\S*\s+)*-i')
+HOME_VAR = 'credveil_home'
 HEREDOC_RE = re.compile(r'<<-?\s*([\'"]?)(\w+)\1[^\n]*\n.*?(?:\n\s*\2\s*(?=\n|$)|\Z)', re.S)
 QUOTED_RE = re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'')
 INLINE_ARG_RE = re.compile(r'(?:^|\s)(?:-c|-Command|/c)\s+("(?:[^"\\]|\\.)*"|\'[^\']*\')', re.I)
@@ -97,19 +102,70 @@ def _forms(p):
 
 
 def check_shell(cmd, rules, scope='full'):
-    if HOME_OVERRIDE_RE.search(cmd):
-        return 'it sets CREDVEIL_HOME, which would point credveil at another inventory'
-    c = re.sub(r'/+', '/', cmd.replace('\\', '/'))
-    cl = c.lower() if os.name == 'nt' else c
-    for p in rules.protect + [rules.home]:
+    """Credential paths anywhere in the command; config writes and CREDVEIL_HOME only where they
+    act (command position, redirection targets), so prose that names them passes."""
+    c = _paths(cmd)
+    for p in rules.protect:
         for f in _forms(p):
-            if f in cl:
-                return f'it references the protected credveil path {f!r}'
+            if f in c:
+                return f'it references the protected credential path {f!r}'
+    code = _code(cmd)
+    if _sets_home(code):
+        return 'it sets CREDVEIL_HOME, which would point credveil at another inventory'
+    if _writes_home(code, rules.home):
+        return f'it writes into the credveil configuration ({rules.home}); the operator edits it'
     if scope == 'full' and opens_transport(cmd):
         for h in rules.hosts:
             if re.search(r'(?<![\w.-])' + re.escape(h) + r'(?![\w-]|\.\w)', cmd, re.I):
                 return f'it opens a direct connection to inventory device {h}'
     return None
+
+
+def _paths(text):
+    c = re.sub(r'/+', '/', text.replace('\\', '/'))
+    return c.lower() if os.name == 'nt' else c
+
+
+def _code(cmd):
+    """The command without heredoc bodies, unless one feeds an interpreter (then it is code)."""
+    if any(w in INTERPRETERS for w in command_words(cmd)):
+        return cmd
+    return HEREDOC_RE.sub('<<HEREDOC\n', cmd)
+
+
+def _segments(code):
+    body = QUOTED_RE.sub('""', code)
+    return [seg.split() for seg in SEGMENT_SPLIT_RE.split(body)]
+
+
+def _sets_home(code):
+    for toks in _segments(code):
+        while toks and _word(toks[0]) in WRAPPERS | {'export', 'set', 'setx', 'declare', 'typeset'}:
+            if toks[0].lower() in ('setx', 'set') and len(toks) > 1 and toks[1].lower() == HOME_VAR:
+                return True
+            toks = toks[1:]
+        for t in toks:
+            lt = t.lower()
+            if lt.startswith((HOME_VAR + '=', '$env:' + HOME_VAR)):
+                return True
+            if not re.match(r'^\$?[\w:]+=', t):
+                break
+    return False
+
+
+def _writes_home(code, home):
+    forms = _forms(home)
+    c = _paths(code)
+    if not any(f in c for f in forms):
+        return False
+    for f in forms:                                   # redirection into the config directory
+        if re.search(r'>{1,2}\s*["\']?[^\s"\'|;&]*' + re.escape(f), c):
+            return True
+    if SED_INPLACE_RE.search(code):
+        return True
+    words = command_words(code)
+    # an interpreter touching the config directory: reads cannot be told from writes there
+    return any(w in WRITE_CMDS or w in INTERPRETERS for w in words)
 
 
 def _word(tok):

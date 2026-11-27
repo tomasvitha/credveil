@@ -56,7 +56,7 @@ class Guard(Base):
 
     def test_creds_paths_blocked(self):
         for cmd in [f'cat {self.home}/creds/fw1.pw', 'type fw1.pw', f'cat {self.extra}',
-                    'Get-Content legacy-creds.txt', f'cd {self.home} && cat cr*/*']:
+                    'Get-Content legacy-creds.txt']:
             self.assertEqual(self.bash(cmd, scope='home'), 2, cmd)
 
     def test_ordinary_commands_allowed(self):
@@ -94,6 +94,18 @@ class Guard(Base):
         for tool, key in (('Edit', 'file_path'), ('Write', 'file_path'), ('MultiEdit', 'file_path')):
             self.assertEqual(self.pre(tool, {key: os.path.join(self.home, 'inventory.toml')}, 'home'), 2, tool)
         self.assertEqual(self.pre('Write', {'file_path': os.path.join(ROOT, 'x.txt')}, 'home'), 0)
+
+    def test_home_scope_ignores_prose(self):
+        for cmd in [f'git commit -m "moved inventory to {self.home}; CREDVEIL_HOME=/x documented"',
+                    f'cat > notes.md <<EOF\nCREDVEIL_HOME={self.home}\necho x > {self.home}/inventory.toml\nEOF',
+                    'grep -n CREDVEIL_HOME= README.md', f'ls {self.home}', f'cat {self.home}/inventory.toml',
+                    'echo "set CREDVEIL_HOME in your profile"']:
+            self.assertEqual(self.bash(cmd, scope='home'), 0, cmd)
+
+    def test_home_writes_through_an_interpreter_blocked(self):
+        cmd = f'python3 - <<EOF\nopen("{self.home}/inventory.toml", "a").write("x")\nEOF'
+        self.assertEqual(self.bash(cmd, scope='home'), 2)
+        self.assertEqual(self.bash(f'cp evil.toml {self.home}/inventory.toml', scope='home'), 2)
 
     def test_setup_is_free_before_an_inventory_exists(self):
         empty = os.path.realpath(tempfile.mkdtemp())

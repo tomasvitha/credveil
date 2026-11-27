@@ -85,7 +85,7 @@ def cmd_run(a):
             raise config.UsageError(f'--vdom/--global do not apply to {pack.name} devices')
         cmds = pack.wrap_commands(cmds, ctx)
     res = connectors.get('ssh').run(d, cmds, a.timeout)
-    return emit(d['vendor'], inv.known_secrets(), res)
+    return emit(d['vendor'], inv.known_secrets(a.alias), res)
 
 
 def cmd_get(a):
@@ -97,7 +97,7 @@ def cmd_get(a):
     https = connectors.get('https')
     url = https.build_url(d, pack.api, a.path, a.vdom, a.param)
     res = https.get(d, pack.api, url, a.timeout)
-    return emit(d['vendor'], inv.known_secrets(), res, as_json=True)
+    return emit(d['vendor'], inv.known_secrets(a.alias), res, as_json=True)
 
 
 def _read_inputs(files):
