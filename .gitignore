@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+*.egg-info/
+build/
 # never commit a real inventory or credential files
 inventory.toml
 creds/
