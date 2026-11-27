@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+# never commit a real inventory or credential files
+inventory.toml
+creds/
+known_hosts

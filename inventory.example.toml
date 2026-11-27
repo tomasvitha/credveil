@@ -1,0 +1,26 @@
+# credveil inventory - copy to ~/.config/credveil/inventory.toml (or $CREDVEIL_HOME/inventory.toml).
+# Lives outside any repository. Holds no secrets itself: only paths to the files that do.
+# Relative paths resolve against the inventory's directory. Credential files hold the bare
+# value on one line; create them yourself (the agent cannot read or write them):
+#   ~/.config/credveil/creds/<alias>.pw      SSH password
+#   ~/.config/credveil/creds/<alias>.token   REST API token
+
+[guard]
+# Extra names that reach inventory devices (FQDNs, HA peers): direct ssh/curl to them is blocked.
+hosts = []
+# Extra credential files outside creds/ that agents must never read (legacy creds files).
+protect = []
+
+[device.example-fw1]
+host = "192.0.2.14"
+vendor = "fortios"            # fortios | ios | nxos | aos-cx | aos-s | comware | arista | junos | routeros | generic
+comment = "HA primary, VDOMs root/Branch"
+user = "ro_diag_user"
+password_file = "creds/example-fw1.pw"
+hostkey = "SHA256:<fingerprint from credveil hostkey, verified>"   # plink pin; `credveil hostkey` prints it
+token_file = "creds/example-fw1.token"
+tls_pin = "sha256//<base64 SPKI hash>"   # curl --pinnedpubkey
+# port = 22
+# https_port = 443
+# key_file = "creds/example-fw1.key"   # SSH key instead of / besides a password
+# ssh_client = "plink"                   # force plink on Linux (default there: OpenSSH + askpass)
