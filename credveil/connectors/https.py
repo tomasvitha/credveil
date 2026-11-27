@@ -60,7 +60,7 @@ def get(d, profile, url, timeout):
         try:
             p = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout + 5)
         except subprocess.TimeoutExpired:
-            raise TransportError('timeout')
+            raise TransportError('timeout') from None
     rc, err = p.returncode, decode(p.stderr)
     if rc:
         # curl's own codes overlap credveil's 90-93 (90 = pinned key mismatch): report, map to 93
