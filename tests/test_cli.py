@@ -182,6 +182,64 @@ class CliE2E(unittest.TestCase):
         self.assertNotIn('Zm9vYmFy', out)
         self.assertIn('touched lines: 2', out)
 
+    def test_mask_uses_the_device_credentials(self):
+        raw = os.path.join(self.tmp.name, 'capture.log')
+        with open(raw, 'w') as fh:
+            fh.write(f'2026-11-27T10:00:00Z login failed for ro, password was {PW}\nhostname fw-1\n')
+        rc, out, err = self.run_cli('mask', raw, '--alias', 'fw')
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn(PW, out)
+        self.assertIn('<masked:known>', out)
+        self.assertIn('hostname fw-1', out)
+
+    def test_mask_alias_supplies_the_vendor_rules(self):
+        raw = os.path.join(self.tmp.name, 'export.conf')
+        with open(raw, 'w') as fh:
+            fh.write(PSK_LINE + '\n')
+        rc, out, err = self.run_cli('mask', raw, '--alias', 'fw')
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn('Zm9vYmFy', out)
+
+    def test_mask_without_alias_consults_no_credentials(self):
+        raw = os.path.join(self.tmp.name, 'capture.log')
+        with open(raw, 'w') as fh:
+            fh.write(f'login failed for ro, password was {PW}\n')
+        rc, out, _ = self.run_cli('mask', raw)
+        self.assertEqual(rc, 0)
+        self.assertIn(PW, out)          # rules only; --alias is what adds the device's own values
+
+    def test_mask_withholds_a_file_when_a_known_credential_survives(self):
+        from credveil.mask import Masker as RealMasker
+
+        class Stuck(RealMasker):
+            def text(self, raw, backstops=True):   # a masker that stops masking: the guard, not a rule
+                return raw
+
+        raw = os.path.join(self.tmp.name, 'capture.log')
+        with open(raw, 'w') as fh:
+            fh.write(f'banner {PW}\n')
+        orig, cli.Masker = cli.Masker, Stuck
+        try:
+            rc, out, err = self.run_cli('mask', raw, '--alias', 'fw')
+        finally:
+            cli.Masker = orig
+        self.assertEqual((rc, out), (cli.EXIT_LEAK, ''))
+        self.assertIn('withheld', err)
+        self.assertNotIn(PW, err)
+
+    def test_audit_alias_counts_the_device_credentials(self):
+        raw = os.path.join(self.tmp.name, 'capture.log')
+        with open(raw, 'w') as fh:
+            fh.write(f'banner {PW}\nhostname x\n')
+        rc, out, err = self.run_cli('audit', raw, '--alias', 'fw')
+        self.assertEqual(rc, 0, err)
+        self.assertIn('known=1', out)
+
+    def test_summary_counts_both_streams(self):
+        rc, _, err = self.run_cli('run', 'noisy', '-c', 'x')
+        self.assertEqual(rc, 3)
+        self.assertIn('enc=1', err)     # the masking happened on stderr; the summary says so
+
 
 class SshArgv(unittest.TestCase):
     def test_argv_never_carries_the_password(self):

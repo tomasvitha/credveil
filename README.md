@@ -17,9 +17,14 @@ fixed the same way: a test case first, then the rule.
 - **Every byte of output is masked before it is printed.** Vendor packs cover FortiOS,
   keyword-style CLIs (Cisco IOS/NX-OS, Aruba AOS-CX/AOS-S, HPE Comware, Arista, Junos), MikroTik
   RouterOS and generic shells/logs/JSON. Vendor-neutral rules sit on top of them: PEM and PuTTY
-  keys, `ENC`, crypt hashes, auth headers, and long hex and base64 blobs.
+  keys, `ENC`, crypt hashes, auth headers, and long hex and base64 blobs. Credential families
+  that need no context are masked wherever they appear: JWTs, platform tokens (GitHub, GitLab,
+  Slack, Stripe, Google, AWS, OpenAI-style), password hashes (`$argon2…`, `pbkdf2_sha256$…`,
+  `$scrypt…`, LDAP `{SSHA}`/`{MD5}`) with the scheme kept, URL-safe (base64url) blobs, and
+  credentials in a URL's userinfo.
 - **Fail-closed.** If a known credential shows up in the output, or masking throws, nothing is
-  printed and credveil exits 90/91.
+  printed and credveil exits 90/91. `mask --alias` carries the same rule: a capture is withheld
+  rather than printed if one of that device's credentials survives.
 - **Diagnostics stay intact.** IP addresses, hostnames, MACs, serials, SPIs and user names pass;
   tests pin that down.
 - **Seatbelts for Claude Code:**
@@ -38,6 +43,7 @@ credveil run <alias> -c 'get system status'     # SSH: one exec, commands in ord
 credveil run <alias> --vdom Branch < cmds.txt   # FortiOS: wrapped in config vdom / edit
 credveil get <alias> /api/v2/monitor/system/status   # REST GET for vendors with a profile
 credveil mask --vendor fortios export.conf > export.masked.conf
+credveil mask --alias fw1 capture.log > capture.masked.log  # adds that device's own credentials
 credveil audit --vendor aos-cx raw.cfg          # what masking would change: counts and lines only
 credveil hostkey <alias>                        # fingerprint to verify and pin
 credveil vendors                                # vendor names and which have REST

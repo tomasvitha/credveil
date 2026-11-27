@@ -4,8 +4,8 @@
     credveil run ALIAS [-c CMD ...] [--vdom V | --global] [--timeout S]
                                                     SSH; commands from -c or stdin, one exec
     credveil get ALIAS PATH [--vdom V] [-p k=v ...] REST GET (token from the inventory)
-    credveil mask [--vendor V] [FILE ...]           mask a file/stdin (exports, log dumps)
-    credveil audit [--vendor V] FILE ...            counts and line numbers only, never values
+    credveil mask [--vendor V | --alias A] [FILE ...]  mask a file/stdin (exports, log dumps)
+    credveil audit [--vendor V | --alias A] FILE ...   counts and line numbers only, never values
     credveil hostkey ALIAS                          the device's SSH host-key fingerprint
     credveil vendors                                known vendor names
 
@@ -14,8 +14,8 @@ inventory, hands them to plink/ssh/curl through files (not argv), and masks stdo
 before printing. Fail-closed: if a known credential survives masking, or masking itself
 crashes, nothing of the output is printed.
 
-Exit codes: the remote command's own code (run), 0 (get), or
-  90  output withheld: a known credential is in the output
+Exit codes: the remote command's own code (run), 0 (get/mask/audit), or
+  90  output withheld: a known credential is in the output (run) or survived masking (mask)
   91  output withheld: masking failed
   92  inventory or usage error
   93  transport error (client missing, timeout, curl failure incl. TLS pin mismatch)
@@ -50,7 +50,9 @@ def emit(vendor, known, res, as_json=False):
             except ValueError:
                 pass
         out = out if out is not None else m.text(res.stdout)
-        err = Masker(vendor, known=known).text(res.stderr)
+        me = Masker(vendor, known=known)
+        err = me.text(res.stderr)
+        m.counts.update(me.counts)      # one summary line for both streams
         leaks_out, leaks_err = m.leaks(out), m.leaks(err)
     except Exception as e:  # noqa: BLE001 - any failure means nothing is printed
         print(f'credveil: output withheld, masking failed ({type(e).__name__})', file=sys.stderr)
@@ -119,22 +121,44 @@ def _eol_of(text):
     return '\r\n' if crlf and crlf * 2 >= text.count('\n') else '\n'
 
 
+def _mask_target(a):
+    """Vendor and known credentials for `mask`/`audit`: `--alias` takes both from the inventory."""
+    alias = getattr(a, 'alias', None)
+    if not alias:
+        return a.vendor or 'generic', ()
+    inv = config.load()
+    if inv is None:
+        raise config.UsageError('no inventory to resolve --alias from')
+    d = inv.device(alias)
+    return a.vendor or d['vendor'], inv.known_secrets(alias)
+
+
 def cmd_mask(a):
+    vendor, known = _mask_target(a)
     rc = 0
     for name, text in _read_inputs(a.files):
         try:
-            masked = Masker(a.vendor).text(text)
-            sys.stdout.write(masked.replace('\n', '\r\n') if _eol_of(text) == '\r\n' else masked)
-        except Exception as e:  # noqa: BLE001
+            m = Masker(vendor, known=known)
+            masked = m.text(text)
+            leaks = m.leaks(masked)      # a known credential that no rule and no encoding covered
+        except Exception as e:  # noqa: BLE001 - any failure withholds this file
             print(f'credveil: {name}: withheld, masking failed ({type(e).__name__})', file=sys.stderr)
             rc = EXIT_MASKFAIL
+            continue
+        if leaks:
+            print(f'credveil: {name}: withheld - a known credential survived masking '
+                  f'(lines {_ranges(leaks)}). Report this as a masking bug.', file=sys.stderr)
+            rc = EXIT_LEAK
+            continue
+        sys.stdout.write(masked.replace('\n', '\r\n') if _eol_of(text) == '\r\n' else masked)
     return rc
 
 
 def cmd_audit(a):
     """Counts and line numbers only - safe to show an agent, meant for the operator's raw captures."""
+    vendor, known = _mask_target(a)
     for name, text in _read_inputs(a.files):
-        m = Masker(a.vendor)
+        m = Masker(vendor, known=known)
         lines = text.replace('\r\n', '\n').split('\n')
         changed = []
         for i, line in enumerate(lines, 1):
@@ -211,7 +235,8 @@ def parser():
     t.add_argument('--timeout', type=int, default=60)
     for name in ('mask', 'audit'):
         x = sub.add_parser(name)
-        x.add_argument('--vendor', default='generic')
+        x.add_argument('--vendor', default=None)
+        x.add_argument('--alias', help='take the vendor and the credentials from this device')
         x.add_argument('files', nargs='*' if name == 'mask' else '+')
     sub.add_parser('hostkey').add_argument('alias')
     return ap
